@@ -1,0 +1,8 @@
+[LOG] Posts saved to posts.txt
+[LOG] Program exited cleanly.
+[LOG] Posts saved to posts.txt
+[LOG] Program exited cleanly.
+[LOG] Posts saved to posts.txt
+[LOG] Program exited cleanly.
+[LOG] Posts saved to posts.txt
+[LOG] Program exited cleanly.
