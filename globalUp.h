@@ -12,11 +12,9 @@
 #include <termios.h>
 #include <unistd.h>
 #endif
+#include "Post.h"
 #include <cstdlib>
 using namespace std;
-
-// Forward declaration for Post
-#include "Post.h"
 
 unsigned long hashPassword(const string& password) {
     unsigned long pass = 5381;
@@ -29,18 +27,10 @@ string getPasswordMasked() {
     string password = "";
     char ch;
 #ifdef _WIN32
-    while ((ch = _getch()) != '\r' && ch != '\n') {
+    while ((ch = _getch()) != '\r') {
         if (ch == '\b') {
-            if (!password.empty()) {
-                cout << "\b \b";
-                cout.flush();
-                password.pop_back();
-            }
-        } else {
-            password += ch;
-            cout << '*';
-            cout.flush();
-        }
+            if (!password.empty()) { cout << "\b \b"; password.pop_back(); }
+        } else { password += ch; cout << '*'; }
     }
 #else
     termios oldt, newt;
@@ -50,16 +40,8 @@ string getPasswordMasked() {
     tcsetattr(STDIN_FILENO, TCSANOW, &newt);
     while ((ch = getchar()) != '\n') {
         if (ch == 127 || ch == '\b') {
-            if (!password.empty()) {
-                cout << "\b \b";
-                cout.flush();
-                password.pop_back();
-            }
-        } else {
-            password += ch;
-            cout << '*';
-            cout.flush();
-        }
+            if (!password.empty()) { cout << "\b \b"; password.pop_back(); }
+        } else { password += ch; cout << '*'; }
     }
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 #endif
@@ -88,7 +70,6 @@ struct Credential {
     Role          role;
 };
 
-// Friend Request struct
 struct FriendRequest {
     string fromUser;
     string toUser;
@@ -248,7 +229,7 @@ void likePost() {
         return;
     }
     
-    viewPosts();  // Show posts first
+    viewPosts();
     
     int postIndex;
     cout << "\nEnter post number to like: ";
@@ -273,7 +254,7 @@ void commentOnPost() {
         return;
     }
     
-    viewPosts();  // Show posts first
+    viewPosts();
     
     int postIndex;
     cout << "\nEnter post number to comment on: ";
@@ -321,7 +302,6 @@ void sendFriendRequest() {
         return;
     }
     
-    // Check if already friends or request pending
     for (const FriendRequest& fr : friendRequests) {
         if ((fr.fromUser == currentUsername && fr.toUser == targetUser) ||
             (fr.fromUser == targetUser && fr.toUser == currentUsername)) {
@@ -360,7 +340,6 @@ void deletePostAdmin() {
         return;
     }
     
-    // Shift posts left
     for (int i = postIndex; i < postCount - 1; i++) {
         postArray[i] = postArray[i + 1];
     }
@@ -396,16 +375,21 @@ void deleteAccountAdmin() {
 
 // ========== PRACTICAL FUNCTION 8: DELETE USER (ADMIN) ==========
 void deleteUser() {
-    deleteAccountAdmin();  // Same functionality
+    deleteAccountAdmin();
 }
 
-// ========== PRACTICAL FUNCTION 9: PROMOTE USER TO ADMIN ==========
-void promoteUser() {
+// ========== PRACTICAL FUNCTION 9: PROMOTE USER TO ADMIN (FIXED!) ==========
+void promoteUserAdmin() {
     string userToPromote;
     cin.ignore();
     
     cout << "\nEnter username to promote to Admin: ";
     getline(cin, userToPromote);
+    
+    if (userToPromote == currentUsername) {
+        cout << "You are already an admin.\n";
+        return;
+    }
     
     for (Credential& c : credentialStore) {
         if (c.username == userToPromote) {
@@ -415,7 +399,7 @@ void promoteUser() {
             }
             c.role = ADMIN;
             saveAllToFile();
-            cout << "User '" << userToPromote << "' promoted to Admin!\n";
+            cout << "User '" << userToPromote << "' promoted to Admin successfully!\n";
             return;
         }
     }
@@ -423,15 +407,15 @@ void promoteUser() {
     cout << "User not found.\n";
 }
 
-// ========== PRACTICAL FUNCTION 10: VIEW STATISTICS ==========
-void viewStats() {
+// ========== PRACTICAL FUNCTION 10: VIEW STATISTICS (FIXED!) ==========
+void viewStatsAdmin() {
     extern Post postArray[100];
     extern int postCount;
     
     cout << "\n========== SYSTEM STATISTICS ==========\n";
     cout << "Total Users: " << credentialStore.size() << "\n";
     
-    int adminCount = 0, userCount = 0, guestCount = 0;
+    int adminCount = 0, userCount = 0;
     for (const Credential& c : credentialStore) {
         if (c.role == ADMIN) adminCount++;
         else if (c.role == USER) userCount++;
@@ -493,13 +477,13 @@ public:
     void search()            { searchUser(); }
     void createPost()        { createNewPost(); }
     void likePost()          { ::likePost(); }
-    void commentPost()       { commentOnPost(); }
+    void commentPost()       { ::commentOnPost(); }
     void sendFriendRequest() { ::sendFriendRequest(); }
     void deletePost()        { deletePostAdmin(); }
     void DeleteAccount()     { deleteAccountAdmin(); }
     void DeleteUser()        { deleteUser(); }
-    void promoteUser()       { promoteUser(); }
-    void ViewStats()         { viewStats(); }
+    void promoteUser()       { promoteUserAdmin(); }  // ← FIXED: calls promoteUserAdmin() not itself!
+    void ViewStats()         { viewStatsAdmin(); }    // ← FIXED: calls viewStatsAdmin() not viewStats()
 
     void createAdminAccount() {
         if (role != ADMIN) {
