@@ -8,16 +8,15 @@
 #include <vector>
 #ifdef _WIN32
 #include <conio.h>
-#include "Comment.h"
 #else
 #include <termios.h>
 #include <unistd.h>
 #endif
-#include "Post.h"
+#include <cstdlib>
 using namespace std;
 
-extern Post postArray[];
-extern int postCount;
+// Forward declaration for Post
+#include "Post.h"
 
 unsigned long hashPassword(const string& password) {
     unsigned long pass = 5381;
@@ -26,15 +25,22 @@ unsigned long hashPassword(const string& password) {
     return pass;
 }
 
-
 string getPasswordMasked() {
     string password = "";
     char ch;
 #ifdef _WIN32
-    while ((ch = _getch()) != '\r') {
+    while ((ch = _getch()) != '\r' && ch != '\n') {
         if (ch == '\b') {
-            if (!password.empty()) { cout << "\b \b"; password.pop_back(); }
-        } else { password += ch; cout << '*'; }
+            if (!password.empty()) {
+                cout << "\b \b";
+                cout.flush();
+                password.pop_back();
+            }
+        } else {
+            password += ch;
+            cout << '*';
+            cout.flush();
+        }
     }
 #else
     termios oldt, newt;
@@ -44,15 +50,22 @@ string getPasswordMasked() {
     tcsetattr(STDIN_FILENO, TCSANOW, &newt);
     while ((ch = getchar()) != '\n') {
         if (ch == 127 || ch == '\b') {
-            if (!password.empty()) { cout << "\b \b"; password.pop_back(); }
-        } else { password += ch; cout << '*'; }
+            if (!password.empty()) {
+                cout << "\b \b";
+                cout.flush();
+                password.pop_back();
+            }
+        } else {
+            password += ch;
+            cout << '*';
+            cout.flush();
+        }
     }
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 #endif
     cout << "\n";
     return password;
 }
-
 
 enum Role { GUEST, USER, ADMIN };
 
@@ -68,7 +81,6 @@ Role stringToRole(const string& s) {
     return GUEST;
 }
 
-
 struct Credential {
     string        username;
     string        email;
@@ -76,11 +88,17 @@ struct Credential {
     Role          role;
 };
 
+// Friend Request struct
+struct FriendRequest {
+    string fromUser;
+    string toUser;
+    bool pending;
+};
 
 vector<Credential> credentialStore;
+vector<FriendRequest> friendRequests;
 const string USERS_FILE = "users.txt";
-
-
+string currentUsername = "";
 
 void saveAllToFile() {
     ofstream file(USERS_FILE);
@@ -118,7 +136,6 @@ void loadFromFile() {
     }
     file.close();
 }
-
 
 bool usernameExists(const string& username) {
     for (const Credential& c : credentialStore)
@@ -177,6 +194,294 @@ public:
     static bool canCreateAdmin       (Role r) { return r == ADMIN; }
 };
 
+// ========== PRACTICAL FUNCTION 1: VIEW POSTS ==========
+void viewPosts() {
+    extern Post postArray[100];
+    extern int postCount;
+    
+    if (postCount == 0) {
+        cout << "\nNo posts available.\n";
+        return;
+    }
+    
+    cout << "\n========== ALL POSTS ==========\n";
+    for (int i = 0; i < postCount; i++) {
+        cout << "\n[Post #" << i << "]\n";
+        postArray[i].displayPost();
+    }
+    cout << "================================\n";
+}
+
+// ========== PRACTICAL FUNCTION 2: SEARCH USER ==========
+void searchUser() {
+    string searchName;
+    cin.ignore();
+    
+    cout << "\nEnter username to search: ";
+    getline(cin, searchName);
+    
+    bool found = false;
+    cout << "\n========== SEARCH RESULTS ==========\n";
+    for (const Credential& c : credentialStore) {
+        if (c.username == searchName) {
+            cout << "Username: " << c.username << "\n";
+            cout << "Email: " << c.email << "\n";
+            cout << "Role: " << roleToString(c.role) << "\n";
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
+        cout << "User '" << searchName << "' not found.\n";
+    }
+    cout << "===================================\n";
+}
+
+// ========== PRACTICAL FUNCTION 3: LIKE POST ==========
+void likePost() {
+    extern Post postArray[100];
+    extern int postCount;
+    
+    if (postCount == 0) {
+        cout << "\nNo posts to like.\n";
+        return;
+    }
+    
+    viewPosts();  // Show posts first
+    
+    int postIndex;
+    cout << "\nEnter post number to like: ";
+    cin >> postIndex;
+    
+    if (postIndex < 0 || postIndex >= postCount) {
+        cout << "Invalid post number.\n";
+        return;
+    }
+    
+    postArray[postIndex].likePost();
+    cout << "Post liked! New like count: " << postArray[postIndex].getLikes() << "\n";
+}
+
+// ========== PRACTICAL FUNCTION 4: COMMENT ON POST ==========
+void commentOnPost() {
+    extern Post postArray[100];
+    extern int postCount;
+    
+    if (postCount == 0) {
+        cout << "\nNo posts to comment on.\n";
+        return;
+    }
+    
+    viewPosts();  // Show posts first
+    
+    int postIndex;
+    cout << "\nEnter post number to comment on: ";
+    cin >> postIndex;
+    
+    if (postIndex < 0 || postIndex >= postCount) {
+        cout << "Invalid post number.\n";
+        return;
+    }
+    
+    cin.ignore();
+    cout << "Enter your comment (max 150 chars): ";
+    string comment;
+    getline(cin, comment);
+    
+    if (comment.length() > 150) {
+        cout << "Comment too long. Max 150 characters.\n";
+        return;
+    }
+    
+    if (comment.empty()) {
+        cout << "Comment cannot be empty.\n";
+        return;
+    }
+    
+    postArray[postIndex].addComment(currentUsername, comment);
+    cout << "Comment added successfully!\n";
+}
+
+// ========== PRACTICAL FUNCTION 5: SEND FRIEND REQUEST ==========
+void sendFriendRequest() {
+    string targetUser;
+    cin.ignore();
+    
+    cout << "\nEnter username to send friend request: ";
+    getline(cin, targetUser);
+    
+    if (targetUser == currentUsername) {
+        cout << "You cannot send friend request to yourself.\n";
+        return;
+    }
+    
+    if (!usernameExists(targetUser)) {
+        cout << "User '" << targetUser << "' not found.\n";
+        return;
+    }
+    
+    // Check if already friends or request pending
+    for (const FriendRequest& fr : friendRequests) {
+        if ((fr.fromUser == currentUsername && fr.toUser == targetUser) ||
+            (fr.fromUser == targetUser && fr.toUser == currentUsername)) {
+            cout << "Friend request already exists or you are already friends.\n";
+            return;
+        }
+    }
+    
+    FriendRequest fr;
+    fr.fromUser = currentUsername;
+    fr.toUser = targetUser;
+    fr.pending = true;
+    friendRequests.push_back(fr);
+    
+    cout << "Friend request sent to " << targetUser << "!\n";
+}
+
+// ========== PRACTICAL FUNCTION 6: DELETE POST (ADMIN) ==========
+void deletePostAdmin() {
+    extern Post postArray[100];
+    extern int postCount;
+    
+    if (postCount == 0) {
+        cout << "\nNo posts to delete.\n";
+        return;
+    }
+    
+    viewPosts();
+    
+    int postIndex;
+    cout << "\nEnter post number to delete: ";
+    cin >> postIndex;
+    
+    if (postIndex < 0 || postIndex >= postCount) {
+        cout << "Invalid post number.\n";
+        return;
+    }
+    
+    // Shift posts left
+    for (int i = postIndex; i < postCount - 1; i++) {
+        postArray[i] = postArray[i + 1];
+    }
+    postCount--;
+    
+    cout << "Post deleted successfully!\n";
+}
+
+// ========== PRACTICAL FUNCTION 7: DELETE ACCOUNT (ADMIN) ==========
+void deleteAccountAdmin() {
+    string userToDelete;
+    cin.ignore();
+    
+    cout << "\nEnter username to delete: ";
+    getline(cin, userToDelete);
+    
+    if (userToDelete == currentUsername) {
+        cout << "You cannot delete your own account.\n";
+        return;
+    }
+    
+    for (int i = 0; i < credentialStore.size(); i++) {
+        if (credentialStore[i].username == userToDelete) {
+            credentialStore.erase(credentialStore.begin() + i);
+            saveAllToFile();
+            cout << "User '" << userToDelete << "' deleted successfully!\n";
+            return;
+        }
+    }
+    
+    cout << "User not found.\n";
+}
+
+// ========== PRACTICAL FUNCTION 8: DELETE USER (ADMIN) ==========
+void deleteUser() {
+    deleteAccountAdmin();  // Same functionality
+}
+
+// ========== PRACTICAL FUNCTION 9: PROMOTE USER TO ADMIN ==========
+void promoteUser() {
+    string userToPromote;
+    cin.ignore();
+    
+    cout << "\nEnter username to promote to Admin: ";
+    getline(cin, userToPromote);
+    
+    for (Credential& c : credentialStore) {
+        if (c.username == userToPromote) {
+            if (c.role == ADMIN) {
+                cout << "User is already an Admin.\n";
+                return;
+            }
+            c.role = ADMIN;
+            saveAllToFile();
+            cout << "User '" << userToPromote << "' promoted to Admin!\n";
+            return;
+        }
+    }
+    
+    cout << "User not found.\n";
+}
+
+// ========== PRACTICAL FUNCTION 10: VIEW STATISTICS ==========
+void viewStats() {
+    extern Post postArray[100];
+    extern int postCount;
+    
+    cout << "\n========== SYSTEM STATISTICS ==========\n";
+    cout << "Total Users: " << credentialStore.size() << "\n";
+    
+    int adminCount = 0, userCount = 0, guestCount = 0;
+    for (const Credential& c : credentialStore) {
+        if (c.role == ADMIN) adminCount++;
+        else if (c.role == USER) userCount++;
+    }
+    
+    cout << "  - Admins: " << adminCount << "\n";
+    cout << "  - Regular Users: " << userCount << "\n";
+    cout << "Total Posts: " << postCount << "\n";
+    cout << "Pending Friend Requests: " << friendRequests.size() << "\n";
+    cout << "=====================================\n";
+}
+
+// ========== PRACTICAL FUNCTION 11: CREATE NEW POST ==========
+void createNewPost() {
+    if (currentUsername == "") {
+        cout << "Error: No user logged in.\n";
+        return;
+    }
+    
+    string caption;
+    cin.ignore();
+    
+    cout << "\n--- Create New Post ---\n";
+    cout << "Enter your post (max 280 chars): ";
+    getline(cin, caption);
+    
+    if (caption.length() > 280) {
+        cout << "Post exceeds 280 characters. Not posted.\n";
+        return;
+    }
+    
+    if (caption.empty()) {
+        cout << "Post cannot be empty.\n";
+        return;
+    }
+    
+    extern Post postArray[100];
+    extern int postCount;
+    
+    if (postCount >= 100) {
+        cout << "Post limit reached. Cannot create more posts.\n";
+        return;
+    }
+    
+    postArray[postCount] = Post(currentUsername, caption);
+    postCount++;
+    
+    cout << "Post created successfully!\n";
+}
+
 class User {
 protected:
     string name;
@@ -184,258 +489,20 @@ protected:
 public:
     User(string n, Role r) : name(n), role(r) {}
 
-    void viewpost() {
-        if (!Permission::canviewpost(role)) {
-            cout << name << " is not allowed to view posts\n";
-            return;
-        }
-        if (postCount == 0) {
-            cout << "No posts available.\n";
-            return;
-        }
-        cout << "\n--- All Posts ---\n";
-        for (int i = 0; i < postCount; i++) {
-            cout << "[Post " << i << "]\n";
-            postArray[i].displayPost();
-        }
-    }
-
-    void search() {
-        if (!Permission::cansearch(role)) {
-            cout << name << " is not allowed to search\n";
-            return;
-        }
-        if (postCount == 0) {
-            cout << "No posts available.\n";
-            return;
-        }
-        cin.ignore();
-        string searchUsername;
-        cout << "Enter username to search: ";
-        getline(cin, searchUsername);
-        
-        bool found = false;
-        cout << "\n--- Posts by " << searchUsername << " ---\n";
-        for (int i = 0; i < postCount; i++) {
-            if (postArray[i].getUsername() == searchUsername) {
-                cout << "[Post " << i << "]\n";
-                postArray[i].displayPost();
-                found = true;
-            }
-        }
-        if (!found) {
-            cout << "No posts found by user: " << searchUsername << "\n";
-        }
-    }
-
-    void createPost() {
-        if (!Permission::canpost(role)) {
-            cout << name << " is not allowed to create a post\n";
-            return;
-        }
-        if (postCount >= 100) {
-            cout << "Post limit reached. Cannot create more posts.\n";
-            return;
-        }
-        cin.ignore();
-        string caption;
-        cout << "Enter post caption: ";
-        getline(cin, caption);
-        
-        postArray[postCount] = Post(name, caption);
-        postCount++;
-        cout << "Post created successfully by " << name << "\n";
-    }
-
-    void likePost() {
-        if (!Permission::canLike(role)) {
-            cout << name << " is not allowed to like posts\n";
-            return;
-        }
-        if (postCount == 0) {
-            cout << "No posts available to like.\n";
-            return;
-        }
-        cout << "\n--- Posts ---\n";
-        for (int i = 0; i < postCount; i++) {
-            cout << "[Post " << i << "]\n";
-            postArray[i].displayPost();
-        }
-        int index;
-        cout << "Enter post index to like: ";
-        cin >> index;
-        
-        if (index >= 0 && index < postCount) {
-            postArray[index].likePost();
-            cout << name << " liked post " << index << "\n";
-        } else {
-            cout << "Invalid post index.\n";
-        }
-    }
-
-    void commentPost() {
-        if (!Permission::cancomment(role)) {
-            cout << name << " is not allowed to comment\n";
-            return;
-        }
-        if (postCount == 0) {
-            cout << "No posts available to comment on.\n";
-            return;
-        }
-        cout << "\n--- Posts ---\n";
-        for (int i = 0; i < postCount; i++) {
-            cout << "[Post " << i << "]\n";
-            postArray[i].displayPost();
-        }
-        int index;
-        cout << "Enter post index to comment on: ";
-        cin >> index;
-        
-        if (index >= 0 && index < postCount) {
-            cin.ignore();
-            string commentText;
-            cout << "Enter comment: ";
-            getline(cin, commentText);
-            postArray[index].addComment(name, commentText);
-            cout << "Comment added successfully.\n";
-        } else {
-            cout << "Invalid post index.\n";
-        }
-    }
-
-    void sendFriendRequest() {
-        if (!Permission::canSendFriendRequest(role)) {
-            cout << name << " is not allowed to send friend requests\n";
-            return;
-        }
-        cin.ignore();
-        string friendUsername;
-        cout << "Enter username to send friend request: ";
-        getline(cin, friendUsername);
-        
-        bool found = false;
-        for (int i = 0; i < credentialStore.size(); i++) {
-            if (credentialStore[i].username == friendUsername) {
-                found = true;
-                break;
-            }
-        }
-        
-        if (found) {
-            cout << name << " sent a friend request to " << friendUsername << "\n";
-        } else {
-            cout << "User not found.\n";
-        }
-    }
-
-    void deletePost() {
-        if (!Permission::canDeletePost(role)) {
-            cout << name << " is not allowed to delete posts\n";
-            return;
-        }
-        if (postCount == 0) {
-            cout << "No posts available to delete.\n";
-            return;
-        }
-        cout << "\n--- Posts ---\n";
-        for (int i = 0; i < postCount; i++) {
-            cout << "[Post " << i << "]\n";
-            postArray[i].displayPost();
-        }
-        int index;
-        cout << "Enter post index to delete: ";
-        cin >> index;
-        
-        if (index >= 0 && index < postCount) {
-            for (int i = index; i < postCount - 1; i++) {
-                postArray[i] = postArray[i + 1];
-            }
-            postCount--;
-            cout << "Post deleted successfully.\n";
-        } else {
-            cout << "Invalid post index.\n";
-        }
-    }
-
-    void DeleteAccount() {
-        if (!Permission::canDeleteAccount(role)) {
-            cout << name << " is not allowed to delete accounts\n";
-            return;
-        }
-        cin.ignore();
-        string userToDelete;
-        cout << "Enter username to delete: ";
-        getline(cin, userToDelete);
-        
-        for (int i = 0; i < credentialStore.size(); i++) {
-            if (credentialStore[i].username == userToDelete) {
-                credentialStore.erase(credentialStore.begin() + i);
-                saveAllToFile();
-                cout << "Account '" << userToDelete << "' deleted successfully.\n";
-                return;
-            }
-        }
-        cout << "User not found.\n";
-    }
-
-    void DeleteUser() {
-        if (!Permission::canDeleteUser(role)) {
-            cout << name << " is not allowed to delete users\n";
-            return;
-        }
-        cin.ignore();
-        string userToDelete;
-        cout << "Enter username to delete: ";
-        getline(cin, userToDelete);
-        
-        for (int i = 0; i < credentialStore.size(); i++) {
-            if (credentialStore[i].username == userToDelete) {
-                credentialStore.erase(credentialStore.begin() + i);
-                saveAllToFile();
-                cout << "User '" << userToDelete << "' deleted successfully.\n";
-                return;
-            }
-        }
-        cout << "User not found.\n";
-    }
-
-    void promoteUser() {
-        if (!Permission::canPromote(role)) {
-            cout << name << " is not allowed to promote users\n";
-            return;
-        }
-        cin.ignore();
-        string userToPromote;
-        cout << "Enter username to promote to Admin: ";
-        getline(cin, userToPromote);
-        
-        for (int i = 0; i < credentialStore.size(); i++) {
-            if (credentialStore[i].username == userToPromote) {
-                if (credentialStore[i].role == ADMIN) {
-                    cout << "User is already an Admin.\n";
-                    return;
-                }
-                credentialStore[i].role = ADMIN;
-                saveAllToFile();
-                cout << "User '" << userToPromote << "' promoted to Admin.\n";
-                return;
-            }
-        }
-        cout << "User not found.\n";
-    }
-
-    void ViewStats() {
-        if (!Permission::canViewStats(role)) {
-            cout << name << " is not allowed to view stats\n";
-            return;
-        }
-        cout << "\n--- System Statistics ---\n";
-        cout << "Total Users: " << credentialStore.size() << "\n";
-        cout << "Total Posts: " << postCount << "\n";
-    }
+    void viewpost()          { viewPosts(); }
+    void search()            { searchUser(); }
+    void createPost()        { createNewPost(); }
+    void likePost()          { ::likePost(); }
+    void commentPost()       { commentOnPost(); }
+    void sendFriendRequest() { ::sendFriendRequest(); }
+    void deletePost()        { deletePostAdmin(); }
+    void DeleteAccount()     { deleteAccountAdmin(); }
+    void DeleteUser()        { deleteUser(); }
+    void promoteUser()       { promoteUser(); }
+    void ViewStats()         { viewStats(); }
 
     void createAdminAccount() {
-        if (!Permission::canCreateAdmin(role)) {
+        if (role != ADMIN) {
             cout << name << " is not allowed to create admin accounts\n";
             return;
         }
@@ -470,24 +537,26 @@ class Guest       : public User { public: Guest()               : User("Guest", 
 class regularUser : public User { public: regularUser(string n)  : User(n,       USER)  {} };
 class Admin       : public User { public: Admin(string n)        : User(n,       ADMIN) {} };
 
-
 void userMenu(User& u, Role role) {
     int choice;
     do {
-        cout << "\n----- MENU -----\n"
+        cout << "\n----- MENU (Logged in as: " << currentUsername << ") -----\n"
              << "1.  View Posts\n"
              << "2.  Search User\n"
              << "3.  Create Post\n"
              << "4.  Like Post\n"
-             << "5.  Comment\n"
-             << "6.  Send Friend Request\n"
-             << "7.  Delete Post\n"
-             << "8.  Delete Account\n"
-             << "9.  Delete User\n"
-             << "10. Promote User\n"
-             << "11. View Stats\n";
-        if (role == ADMIN)
-             cout << "12. Create Admin Account\n";
+             << "5.  Comment on Post\n"
+             << "6.  Send Friend Request\n";
+        
+        if (role == ADMIN) {
+            cout << "7.  Delete Post\n"
+                 << "8.  Delete Account\n"
+                 << "9.  Delete User\n"
+                 << "10. Promote User to Admin\n"
+                 << "11. View Statistics\n"
+                 << "12. Create Admin Account\n";
+        }
+        
         cout << "0.  Logout\n"
              << "Enter choice: ";
         cin >> choice;
@@ -499,21 +568,39 @@ void userMenu(User& u, Role role) {
             case 4:  u.likePost();           break;
             case 5:  u.commentPost();        break;
             case 6:  u.sendFriendRequest();  break;
-            case 7:  u.deletePost();         break;
-            case 8:  u.DeleteAccount();      break;
-            case 9:  u.DeleteUser();         break;
-            case 10: u.promoteUser();        break;
-            case 11: u.ViewStats();          break;
+            case 7:  
+                if (role == ADMIN) u.deletePost();
+                else cout << "Admin only function.\n";
+                break;
+            case 8:  
+                if (role == ADMIN) u.DeleteAccount();
+                else cout << "Admin only function.\n";
+                break;
+            case 9:  
+                if (role == ADMIN) u.DeleteUser();
+                else cout << "Admin only function.\n";
+                break;
+            case 10: 
+                if (role == ADMIN) u.promoteUser();
+                else cout << "Admin only function.\n";
+                break;
+            case 11: 
+                if (role == ADMIN) u.ViewStats();
+                else cout << "Admin only function.\n";
+                break;
             case 12:
                 if (role == ADMIN) u.createAdminAccount();
                 else cout << "Invalid choice\n";
                 break;
-            case 0:  cout << "Logging out...\n"; break;
-            default: cout << "Invalid choice\n";
+            case 0:  
+                cout << "Logging out...\n"; 
+                currentUsername = ""; 
+                break;
+            default: 
+                cout << "Invalid choice\n";
         }
     } while (choice != 0);
 }
-
 
 void registerUser() {
     string username, email, password, confirmPassword;
@@ -543,7 +630,6 @@ void registerUser() {
     cout << "Registration successful! You can now log in as '" << username << "'.\n";
 }
 
-
 void loginAndEnter() {
     string username, email, password;
     cin.ignore();
@@ -560,6 +646,7 @@ void loginAndEnter() {
     }
 
     cout << "Login successful! Welcome, " << username << ".\n";
+    currentUsername = username;
 
     if (role == ADMIN) { Admin a(username);       userMenu(a, ADMIN); }
     else               { regularUser u(username); userMenu(u, USER);  }

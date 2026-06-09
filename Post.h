@@ -35,6 +35,10 @@ void likePost(){
     likes++;
 }
 
+int getLikes() {
+    return likes;
+}
+
 void addComment(string user , string text){
     if(commentCount < 10){
         comment[commentCount] = Comment(user, text);
@@ -44,6 +48,7 @@ void addComment(string user , string text){
     }
 
 }
+
 void displayPost(){
     cout << "Username: " << username << endl;
     cout << "Caption: " << caption << endl;
