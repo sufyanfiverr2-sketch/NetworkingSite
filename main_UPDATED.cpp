@@ -1,14 +1,11 @@
 // main.cpp
 #include "exceptions.h"
 #include "fileHandler.h"
+#include "Post.h"
 #include <iostream>
 #include <vector>
 #include "globalUp.h"
-#include "Comment.h"
-#include "Post.h"
 using namespace std;
-
-
 
 // Global post array
 Post postArray[100];
@@ -18,7 +15,7 @@ int main() {
 
 //===============================================
 
-    // STARTUP — load files inside try/catch
+    // STARTUP — load all files inside try/catch
     cout<<"---------------------------------------------------------------\n";
     cout << "===================  SOCIAL CONNECT APP  ===================\n";
     cout<<"---------------------------------------------------------------\n";
@@ -32,13 +29,31 @@ int main() {
         cout << "[Starting with empty user database]\n";
     }
 
+    // ========== NEW: LOAD FRIENDS ==========
+    try {
+        loadFriendsFromFile();
+        cout << "[" << friendRequests.size() << " friend connections loaded]\n";
+    }
+    catch (...) {
+        cout << "[No friend data found, starting fresh]\n";
+    }
+
+    // ========== NEW: LOAD MESSAGES ==========
+    try {
+        loadMessagesFromFile();
+        cout << "[" << messageStore.size() << " messages loaded]\n";
+    }
+    catch (...) {
+        cout << "[No messages found, starting fresh]\n";
+    }
+
     // CHECK IF NO USERS EXIST — FIRST TIME SETUP
     if (credentialStore.empty()) {
         cout << "\n";
         firstTimeAdminSetup();
     }
 
-    // Load posts (optional — if you implement post persistence)
+    // Load posts (optional)
     try {
         // loadPosts(postArray, postCount);
     }
@@ -78,8 +93,10 @@ int main() {
     try {
         FileHandler::saveUsers(credentialStore);
         FileHandler::savePosts(postArray, postCount);
+        saveFriendsToFile();           // ← NEW: SAVE FRIENDS
+        saveMessagesToFile();          // ← NEW: SAVE MESSAGES
         FileHandler::writeLog("Program exited cleanly.");
-        cout << "[Data saved successfully]\n";
+        cout << "[All data saved successfully]\n";
     }
     catch (FileNotFoundException& e) {
         cout << "Save error: " << e.what() << "\n";

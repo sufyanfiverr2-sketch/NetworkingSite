@@ -6,15 +6,19 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <ctime>
 #ifdef _WIN32
 #include <conio.h>
 #else
 #include <termios.h>
 #include <unistd.h>
 #endif
-#include "Post.h"
 #include <cstdlib>
+#include "Post.h"
 using namespace std;
+
+// Forward declaration for Post
+class Post;
 
 unsigned long hashPassword(const string& password) {
     unsigned long pass = 5381;
@@ -76,10 +80,106 @@ struct FriendRequest {
     bool pending;
 };
 
+struct Message {
+    string fromUser;
+    string toUser;
+    string content;
+    bool read;
+    
+    Message() : read(false) {}
+    Message(string f, string t, string c) : fromUser(f), toUser(t), content(c), read(false) {}
+};
+
 vector<Credential> credentialStore;
 vector<FriendRequest> friendRequests;
+vector<Message> messageStore;
 const string USERS_FILE = "users.txt";
+const string FRIENDS_FILE = "friends.txt";      // ← NEW
+const string MESSAGES_FILE = "messages.txt";    // ← NEW
 string currentUsername = "";
+
+// ========== NEW: SAVE FRIENDS TO FILE ==========
+void saveFriendsToFile() {
+    ofstream file(FRIENDS_FILE);
+    if (!file) { 
+        cout << "[Error] Could not open friends.txt for writing.\n"; 
+        return; 
+    }
+    for (const FriendRequest& fr : friendRequests) {
+        file << fr.fromUser << "|" 
+             << fr.toUser << "|" 
+             << (fr.pending ? "1" : "0") << "\n";
+    }
+    file.close();
+}
+
+// ========== NEW: LOAD FRIENDS FROM FILE ==========
+void loadFriendsFromFile() {
+    ifstream file(FRIENDS_FILE);
+    if (!file) return;
+    
+    friendRequests.clear();
+    string line;
+    while (getline(file, line)) {
+        if (line.empty()) continue;
+        stringstream ss(line);
+        string fromUser, toUser, pendingStr;
+        
+        getline(ss, fromUser, '|');
+        getline(ss, toUser, '|');
+        getline(ss, pendingStr, '|');
+        
+        FriendRequest fr;
+        fr.fromUser = fromUser;
+        fr.toUser = toUser;
+        fr.pending = (pendingStr == "1");
+        friendRequests.push_back(fr);
+    }
+    file.close();
+}
+
+// ========== NEW: SAVE MESSAGES TO FILE ==========
+void saveMessagesToFile() {
+    ofstream file(MESSAGES_FILE);
+    if (!file) { 
+        cout << "[Error] Could not open messages.txt for writing.\n"; 
+        return; 
+    }
+    for (const Message& m : messageStore) {
+        file << m.fromUser << "|" 
+             << m.toUser << "|" 
+             << m.content << "|" 
+             << (m.read ? "1" : "0") << "\n";
+    }
+    file.close();
+}
+
+// ========== NEW: LOAD MESSAGES FROM FILE ==========
+void loadMessagesFromFile() {
+    ifstream file(MESSAGES_FILE);
+    if (!file) return;
+    
+    messageStore.clear();
+    string line;
+    while (getline(file, line)) {
+        if (line.empty()) continue;
+        stringstream ss(line);
+        string fromUser, toUser, content, readStr;
+        
+        getline(ss, fromUser, '|');
+        getline(ss, toUser, '|');
+        getline(ss, content, '|');
+        getline(ss, readStr, '|');
+        
+        Message m;
+        m.fromUser = fromUser;
+        m.toUser = toUser;
+        m.content = content;
+        m.read = (readStr == "1");
+        messageStore.push_back(m);
+    }
+    file.close();
+}
 
 void saveAllToFile() {
     ofstream file(USERS_FILE);
@@ -159,6 +259,18 @@ void addCredential(const string& username,
     saveAllToFile();
 }
 
+bool areFriends(const string& user1, const string& user2) {
+    for (const FriendRequest& fr : friendRequests) {
+        if (!fr.pending) {
+            if ((fr.fromUser == user1 && fr.toUser == user2) ||
+                (fr.fromUser == user2 && fr.toUser == user1)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 class Permission {
 public:
     static bool canviewpost          (Role r) { return true; }
@@ -175,7 +287,6 @@ public:
     static bool canCreateAdmin       (Role r) { return r == ADMIN; }
 };
 
-// ========== PRACTICAL FUNCTION 1: VIEW POSTS ==========
 void viewPosts() {
     extern Post postArray[100];
     extern int postCount;
@@ -193,7 +304,6 @@ void viewPosts() {
     cout << "================================\n";
 }
 
-// ========== PRACTICAL FUNCTION 2: SEARCH USER ==========
 void searchUser() {
     string searchName;
     cin.ignore();
@@ -219,7 +329,6 @@ void searchUser() {
     cout << "===================================\n";
 }
 
-// ========== PRACTICAL FUNCTION 3: LIKE POST ==========
 void likePost() {
     extern Post postArray[100];
     extern int postCount;
@@ -244,7 +353,6 @@ void likePost() {
     cout << "Post liked! New like count: " << postArray[postIndex].getLikes() << "\n";
 }
 
-// ========== PRACTICAL FUNCTION 4: COMMENT ON POST ==========
 void commentOnPost() {
     extern Post postArray[100];
     extern int postCount;
@@ -284,7 +392,6 @@ void commentOnPost() {
     cout << "Comment added successfully!\n";
 }
 
-// ========== PRACTICAL FUNCTION 5: SEND FRIEND REQUEST ==========
 void sendFriendRequest() {
     string targetUser;
     cin.ignore();
@@ -303,9 +410,14 @@ void sendFriendRequest() {
     }
     
     for (const FriendRequest& fr : friendRequests) {
-        if ((fr.fromUser == currentUsername && fr.toUser == targetUser) ||
-            (fr.fromUser == targetUser && fr.toUser == currentUsername)) {
-            cout << "Friend request already exists or you are already friends.\n";
+        if ((fr.fromUser == currentUsername && fr.toUser == targetUser && fr.pending) ||
+            (fr.fromUser == targetUser && fr.toUser == currentUsername && fr.pending)) {
+            cout << "Friend request already pending.\n";
+            return;
+        }
+        if ((fr.fromUser == currentUsername && fr.toUser == targetUser && !fr.pending) ||
+            (fr.fromUser == targetUser && fr.toUser == currentUsername && !fr.pending)) {
+            cout << "You are already friends with " << targetUser << ".\n";
             return;
         }
     }
@@ -315,11 +427,254 @@ void sendFriendRequest() {
     fr.toUser = targetUser;
     fr.pending = true;
     friendRequests.push_back(fr);
+    saveFriendsToFile();  // ← SAVE immediately
     
     cout << "Friend request sent to " << targetUser << "!\n";
 }
 
-// ========== PRACTICAL FUNCTION 6: DELETE POST (ADMIN) ==========
+void viewIncomingRequests() {
+    cout << "\n========== INCOMING FRIEND REQUESTS ==========\n";
+    
+    vector<int> pendingIndices;
+    for (int i = 0; i < friendRequests.size(); i++) {
+        if (friendRequests[i].toUser == currentUsername && friendRequests[i].pending) {
+            cout << "[Request #" << pendingIndices.size() << "] From: " 
+                 << friendRequests[i].fromUser << "\n";
+            pendingIndices.push_back(i);
+        }
+    }
+    
+    if (pendingIndices.empty()) {
+        cout << "No pending friend requests.\n";
+        cout << "============================================\n";
+        return;
+    }
+    
+    cout << "============================================\n";
+    
+    int choice;
+    cout << "\nEnter request number to handle (or -1 to skip): ";
+    cin >> choice;
+    
+    if (choice == -1) return;
+    
+    if (choice < 0 || choice >= pendingIndices.size()) {
+        cout << "Invalid request number.\n";
+        return;
+    }
+    
+    int requestIndex = pendingIndices[choice];
+    
+    cout << "Accept friend request from " << friendRequests[requestIndex].fromUser << "? (y/n): ";
+    char response;
+    cin >> response;
+    
+    if (response == 'y' || response == 'Y') {
+        friendRequests[requestIndex].pending = false;
+        saveFriendsToFile();  // ← SAVE immediately
+        cout << "Friend request accepted! " << friendRequests[requestIndex].fromUser 
+             << " is now your friend.\n";
+    } else {
+        friendRequests.erase(friendRequests.begin() + requestIndex);
+        saveFriendsToFile();  // ← SAVE immediately
+        cout << "Friend request rejected.\n";
+    }
+}
+
+void viewFriends() {
+    cout << "\n========== YOUR FRIENDS LIST ==========\n";
+    
+    vector<string> friends;
+    for (const FriendRequest& fr : friendRequests) {
+        if (!fr.pending) {
+            if (fr.fromUser == currentUsername) {
+                friends.push_back(fr.toUser);
+            } else if (fr.toUser == currentUsername) {
+                friends.push_back(fr.fromUser);
+            }
+        }
+    }
+    
+    if (friends.empty()) {
+        cout << "You have no friends yet.\n";
+    } else {
+        cout << "Total Friends: " << friends.size() << "\n";
+        for (int i = 0; i < friends.size(); i++) {
+            cout << (i + 1) << ". " << friends[i] << "\n";
+        }
+    }
+    cout << "=======================================\n";
+}
+
+void sendMessage() {
+    string recipientUser;
+    cin.ignore();
+    
+    cout << "\n--- Send Message ---\n";
+    cout << "Enter friend's username: ";
+    getline(cin, recipientUser);
+    
+    if (recipientUser == currentUsername) {
+        cout << "You cannot message yourself.\n";
+        return;
+    }
+    
+    if (!usernameExists(recipientUser)) {
+        cout << "User '" << recipientUser << "' not found.\n";
+        return;
+    }
+    
+    if (!areFriends(currentUsername, recipientUser)) {
+        cout << "You can only message your friends!\n";
+        cout << "Add '" << recipientUser << "' as a friend first.\n";
+        return;
+    }
+    
+    cout << "Enter your message (max 500 chars): ";
+    string messageText;
+    getline(cin, messageText);
+    
+    if (messageText.length() > 500) {
+        cout << "Message too long. Max 500 characters.\n";
+        return;
+    }
+    
+    if (messageText.empty()) {
+        cout << "Message cannot be empty.\n";
+        return;
+    }
+    
+    Message msg(currentUsername, recipientUser, messageText);
+    messageStore.push_back(msg);
+    saveMessagesToFile();  // ← SAVE immediately
+    
+    cout << "Message sent to " << recipientUser << "!\n";
+}
+
+void viewInbox() {
+    cout << "\n========== YOUR INBOX ==========\n";
+    
+    vector<int> messageIndices;
+    int unreadCount = 0;
+    
+    for (int i = 0; i < messageStore.size(); i++) {
+        if (messageStore[i].toUser == currentUsername) {
+            messageIndices.push_back(i);
+            if (!messageStore[i].read) unreadCount++;
+        }
+    }
+    
+    if (messageIndices.empty()) {
+        cout << "No messages.\n";
+        cout << "===============================\n";
+        return;
+    }
+    
+    cout << "Total Messages: " << messageIndices.size() << "\n";
+    cout << "Unread: " << unreadCount << "\n\n";
+    
+    for (int j = 0; j < messageIndices.size(); j++) {
+        int i = messageIndices[j];
+        string status = messageStore[i].read ? "[Read]" : "[UNREAD]";
+        cout << "[Message #" << j << "] " << status << " From: " << messageStore[i].fromUser << "\n";
+    }
+    
+    cout << "===============================\n";
+    
+    cout << "\nEnter message number to read (or -1 to skip): ";
+    int choice;
+    cin >> choice;
+    
+    if (choice == -1) return;
+    
+    if (choice < 0 || choice >= messageIndices.size()) {
+        cout << "Invalid message number.\n";
+        return;
+    }
+    
+    int msgIndex = messageIndices[choice];
+    messageStore[msgIndex].read = true;
+    saveMessagesToFile();  // ← SAVE immediately
+    
+    cout << "\n========== MESSAGE ==========\n";
+    cout << "From: " << messageStore[msgIndex].fromUser << "\n";
+    cout << "Message: " << messageStore[msgIndex].content << "\n";
+    cout << "==============================\n";
+    
+    cout << "\nReply to " << messageStore[msgIndex].fromUser << "? (y/n): ";
+    char response;
+    cin >> response;
+    
+    if (response == 'y' || response == 'Y') {
+        string recipientUser = messageStore[msgIndex].fromUser;
+        cin.ignore();
+        
+        cout << "Enter your reply (max 500 chars): ";
+        string replyText;
+        getline(cin, replyText);
+        
+        if (replyText.length() > 500) {
+            cout << "Message too long.\n";
+            return;
+        }
+        
+        if (replyText.empty()) {
+            cout << "Message cannot be empty.\n";
+            return;
+        }
+        
+        Message reply(currentUsername, recipientUser, replyText);
+        messageStore.push_back(reply);
+        saveMessagesToFile();  // ← SAVE immediately
+        
+        cout << "Reply sent!\n";
+    }
+}
+
+void viewConversation() {
+    string friendName;
+    cin.ignore();
+    
+    cout << "\nEnter friend's username to view conversation: ";
+    getline(cin, friendName);
+    
+    if (friendName == currentUsername) {
+        cout << "Cannot view conversation with yourself.\n";
+        return;
+    }
+    
+    if (!areFriends(currentUsername, friendName)) {
+        cout << "You are not friends with " << friendName << ".\n";
+        return;
+    }
+    
+    cout << "\n========== CONVERSATION WITH " << friendName << " ==========\n";
+    
+    vector<Message> conversation;
+    for (int i = 0; i < messageStore.size(); i++) {
+        if ((messageStore[i].fromUser == currentUsername && messageStore[i].toUser == friendName) ||
+            (messageStore[i].fromUser == friendName && messageStore[i].toUser == currentUsername)) {
+            conversation.push_back(messageStore[i]);
+            if (messageStore[i].toUser == currentUsername && !messageStore[i].read) {
+                messageStore[i].read = true;  // Mark as read
+            }
+        }
+    }
+    
+    if (conversation.empty()) {
+        cout << "No messages with " << friendName << ".\n";
+        cout << "=====================================\n";
+        return;
+    }
+    
+    for (const Message& m : conversation) {
+        cout << m.fromUser << ": " << m.content << "\n";
+    }
+    
+    cout << "=====================================\n";
+    saveMessagesToFile();  // ← SAVE immediately
+}
+
 void deletePostAdmin() {
     extern Post postArray[100];
     extern int postCount;
@@ -348,7 +703,6 @@ void deletePostAdmin() {
     cout << "Post deleted successfully!\n";
 }
 
-// ========== PRACTICAL FUNCTION 7: DELETE ACCOUNT (ADMIN) ==========
 void deleteAccountAdmin() {
     string userToDelete;
     cin.ignore();
@@ -364,7 +718,24 @@ void deleteAccountAdmin() {
     for (int i = 0; i < credentialStore.size(); i++) {
         if (credentialStore[i].username == userToDelete) {
             credentialStore.erase(credentialStore.begin() + i);
+            
+            for (int j = friendRequests.size() - 1; j >= 0; j--) {
+                if (friendRequests[j].fromUser == userToDelete || 
+                    friendRequests[j].toUser == userToDelete) {
+                    friendRequests.erase(friendRequests.begin() + j);
+                }
+            }
+            
+            for (int j = messageStore.size() - 1; j >= 0; j--) {
+                if (messageStore[j].fromUser == userToDelete || 
+                    messageStore[j].toUser == userToDelete) {
+                    messageStore.erase(messageStore.begin() + j);
+                }
+            }
+            
             saveAllToFile();
+            saveFriendsToFile();     // ← SAVE
+            saveMessagesToFile();    // ← SAVE
             cout << "User '" << userToDelete << "' deleted successfully!\n";
             return;
         }
@@ -373,12 +744,10 @@ void deleteAccountAdmin() {
     cout << "User not found.\n";
 }
 
-// ========== PRACTICAL FUNCTION 8: DELETE USER (ADMIN) ==========
 void deleteUser() {
     deleteAccountAdmin();
 }
 
-// ========== PRACTICAL FUNCTION 9: PROMOTE USER TO ADMIN (FIXED!) ==========
 void promoteUserAdmin() {
     string userToPromote;
     cin.ignore();
@@ -407,7 +776,6 @@ void promoteUserAdmin() {
     cout << "User not found.\n";
 }
 
-// ========== PRACTICAL FUNCTION 10: VIEW STATISTICS (FIXED!) ==========
 void viewStatsAdmin() {
     extern Post postArray[100];
     extern int postCount;
@@ -424,11 +792,16 @@ void viewStatsAdmin() {
     cout << "  - Admins: " << adminCount << "\n";
     cout << "  - Regular Users: " << userCount << "\n";
     cout << "Total Posts: " << postCount << "\n";
-    cout << "Pending Friend Requests: " << friendRequests.size() << "\n";
+    
+    int pendingRequests = 0;
+    for (const FriendRequest& fr : friendRequests) {
+        if (fr.pending) pendingRequests++;
+    }
+    cout << "Pending Friend Requests: " << pendingRequests << "\n";
+    cout << "Total Messages: " << messageStore.size() << "\n";
     cout << "=====================================\n";
 }
 
-// ========== PRACTICAL FUNCTION 11: CREATE NEW POST ==========
 void createNewPost() {
     if (currentUsername == "") {
         cout << "Error: No user logged in.\n";
@@ -479,11 +852,16 @@ public:
     void likePost()          { ::likePost(); }
     void commentPost()       { ::commentOnPost(); }
     void sendFriendRequest() { ::sendFriendRequest(); }
+    void viewFriendRequests() { viewIncomingRequests(); }
+    void viewMyFriends()     { viewFriends(); }
+    void sendMsg()           { sendMessage(); }
+    void viewMsg()           { viewInbox(); }
+    void viewConvo()         { viewConversation(); }
     void deletePost()        { deletePostAdmin(); }
     void DeleteAccount()     { deleteAccountAdmin(); }
     void DeleteUser()        { deleteUser(); }
-    void promoteUser()       { promoteUserAdmin(); }  // ← FIXED: calls promoteUserAdmin() not itself!
-    void ViewStats()         { viewStatsAdmin(); }    // ← FIXED: calls viewStatsAdmin() not viewStats()
+    void promoteUser()       { promoteUserAdmin(); }
+    void ViewStats()         { viewStatsAdmin(); }
 
     void createAdminAccount() {
         if (role != ADMIN) {
@@ -530,15 +908,20 @@ void userMenu(User& u, Role role) {
              << "3.  Create Post\n"
              << "4.  Like Post\n"
              << "5.  Comment on Post\n"
-             << "6.  Send Friend Request\n";
+             << "6.  Send Friend Request\n"
+             << "7.  View Friend Requests\n"
+             << "8.  View Friends List\n"
+             << "9.  Send Message to Friend\n"
+             << "10. View Inbox\n"
+             << "11. View Conversation\n";
         
         if (role == ADMIN) {
-            cout << "7.  Delete Post\n"
-                 << "8.  Delete Account\n"
-                 << "9.  Delete User\n"
-                 << "10. Promote User to Admin\n"
-                 << "11. View Statistics\n"
-                 << "12. Create Admin Account\n";
+            cout << "12. Delete Post\n"
+                 << "13. Delete Account\n"
+                 << "14. Delete User\n"
+                 << "15. Promote User to Admin\n"
+                 << "16. View Statistics\n"
+                 << "17. Create Admin Account\n";
         }
         
         cout << "0.  Logout\n"
@@ -546,33 +929,38 @@ void userMenu(User& u, Role role) {
         cin >> choice;
 
         switch (choice) {
-            case 1:  u.viewpost();           break;
-            case 2:  u.search();             break;
-            case 3:  u.createPost();         break;
-            case 4:  u.likePost();           break;
-            case 5:  u.commentPost();        break;
-            case 6:  u.sendFriendRequest();  break;
-            case 7:  
+            case 1:  u.viewpost();            break;
+            case 2:  u.search();              break;
+            case 3:  u.createPost();          break;
+            case 4:  u.likePost();            break;
+            case 5:  u.commentPost();         break;
+            case 6:  u.sendFriendRequest();   break;
+            case 7:  u.viewFriendRequests();  break;
+            case 8:  u.viewMyFriends();       break;
+            case 9:  u.sendMsg();             break;
+            case 10: u.viewMsg();             break;
+            case 11: u.viewConvo();           break;
+            case 12: 
                 if (role == ADMIN) u.deletePost();
                 else cout << "Admin only function.\n";
                 break;
-            case 8:  
+            case 13: 
                 if (role == ADMIN) u.DeleteAccount();
                 else cout << "Admin only function.\n";
                 break;
-            case 9:  
+            case 14: 
                 if (role == ADMIN) u.DeleteUser();
                 else cout << "Admin only function.\n";
                 break;
-            case 10: 
+            case 15: 
                 if (role == ADMIN) u.promoteUser();
                 else cout << "Admin only function.\n";
                 break;
-            case 11: 
+            case 16: 
                 if (role == ADMIN) u.ViewStats();
                 else cout << "Admin only function.\n";
                 break;
-            case 12:
+            case 17:
                 if (role == ADMIN) u.createAdminAccount();
                 else cout << "Invalid choice\n";
                 break;
